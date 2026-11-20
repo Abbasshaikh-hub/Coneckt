@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Conekt — Real-Time GeoChat</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background: #0b141a; color: #e9edef; height: 100vh; display: flex; overflow: hidden; }
+
+        /* Auth Modal */
+        #auth-modal {
+          position: fixed; inset: 0; background: rgba(11, 20, 26, 0.96); z-index: 9999;
+          display: flex; align-items: center; justify-content: center;
+        }
+        .auth-card {
+          background: #202c33; padding: 28px; border-radius: 12px; width: 380px;
+          box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+        }
+        .auth-card h2 { text-align: center; color: #00a884; margin-bottom: 6px; }
+        .auth-card p { text-align: center; font-size: 13px; color: #8696a0; margin-bottom: 18px; }
+        .auth-tabs { display: flex; margin-bottom: 16px; border-bottom: 1px solid #2a3942; }
+        .auth-tab {
+          flex: 1; padding: 10px; background: none; border: none; color: #8696a0;
+          font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent;
+        }
+        .auth-tab.active { color: #00a884; border-bottom-color: #00a884; }
+        .auth-card input {
+          width: 100%; padding: 11px 12px; margin-bottom: 12px; border-radius: 8px;
+          border: 1px solid #2a3942; background: #111b21; color: #e9edef; font-size: 14px;
+        }
+        .gps-box {
+          font-size: 12px; color: #00a884; margin-bottom: 14px; text-align: center;
+          background: #111b21; padding: 8px; border-radius: 8px; border: 1px solid #2a3942;
+        }
+        .submit-btn {
+          width: 100%; padding: 12px; background: #00a884; color: #111b21;
+          border: none; border-radius: 8px; font-weight: 700; cursor: pointer; font-size: 14px;
+        }
+        .auth-error { color: #f15c6d; font-size: 12px; margin-bottom: 10px; text-align: center; min-height: 16px; }
+
+        /* Left Sidebar */
+        .sidebar {
+          width: 340px; background: #111b21; border-right: 1px solid #222d34;
+          display: flex; flex-direction: column;
+        }
+        .sidebar-header {
+          padding: 14px 16px; background: #202c33; display: flex;
+          justify-content: space-between; align-items: center;
+        }
+        .me-badge { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
+        .dot-online { width: 10px; height: 10px; border-radius: 50%; background: #00a884; display: inline-block; }
+        .dot-offline { width: 10px; height: 10px; border-radius: 50%; background: #667781; display: inline-block; }
+
+        .tab-bar { display: flex; background: #111b21; border-bottom: 1px solid #222d34; }
+        .tab-btn {
+          flex: 1; padding: 10px; background: none; border: none; color: #8696a0;
+          cursor: pointer; font-weight: 600; border-bottom: 2px solid transparent;
+        }
+        .tab-btn.active { color: #00a884; border-bottom-color: #00a884; }
+
+        .contact-list { flex: 1; overflow-y: auto; }
+        .contact-item {
+          padding: 14px 16px; border-bottom: 1px solid #222d34; cursor: pointer;
+          display: flex; justify-content: space-between; align-items: center;
+        }
+        .contact-item:hover, .contact-item.active { background: #2a3942; }
+        .contact-info h4 { font-size: 15px; margin-bottom: 3px; display: flex; align-items: center; gap: 6px; }
+        .contact-info span { font-size: 12px; color: #8696a0; }
+        .unread-badge {
+          background: #00a884; color: #111b21; font-size: 11px; font-weight: 700;
+          padding: 2px 7px; border-radius: 12px; display: none;
+        }
+
+        /* Radar Container */
+        #radar-panel { display: none; flex-direction: column; flex: 1; }
+        #map { flex: 1; width: 100%; }
+        .radar-controls { padding: 10px; background: #202c33; display: flex; gap: 6px; align-items: center; }
+        .radar-controls input {
+          width: 65px; padding: 6px; background: #111b21; border: 1px solid #2a3942;
+          color: #e9edef; border-radius: 6px; font-size: 12px;
+        }
+        .radar-controls button {
+          flex: 1; padding: 7px; background: #00a884; color: #111b21; border: none;
+          border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 12px;
+        }
+
+        /* Right Chat Area */
+        .chat-area { flex: 1; display: flex; flex-direction: column; background: #0b141a; }
+        .chat-header {
+          padding: 14px 20px; background: #202c33; border-bottom: 1px solid #222d34;
+          display: flex; justify-content: space-between; align-items: center; min-height: 60px;
+        }
+        .chat-header-title h3 { font-size: 16px; }
+        .chat-header-sub { font-size: 12px; color: #00a884; height: 16px; }
+
+        .messages-box {
+          flex: 1; padding: 20px; overflow-y: auto; display: flex;
+          flex-direction: column; gap: 8px;
+        }
+        .empty-state { margin: auto; color: #8696a0; text-align: center; }
+
+        .msg-row { display: flex; flex-direction: column; max-width: 65%; }
+        .msg-row.sent { align-self: flex-end; }
+        .msg-row.received { align-self: flex-start; }
+
+        .msg-bubble {
+          padding: 8px 12px; border-radius: 8px; font-size: 14px; line-height: 1.4;
+          word-wrap: break-word;
+        }
+        .sent .msg-bubble { background: #005c4b; color: #e9edef; border-top-right-radius: 0; }
+        .received .msg-bubble { background: #202c33; color: #e9edef; border-top-left-radius: 0; }
+
+        .msg-meta {
+          display: flex; justify-content: flex-end; align-items: center; gap: 4px;
+          font-size: 10px; color: #8696a0; margin-top: 4px;
+        }
+        .ticks { font-weight: bold; font-size: 11px; }
+        .ticks.SENT, .ticks.DELIVERED { color: #8696a0; }
+        .ticks.READ { color: #53bdeb; }
+
+        .chat-input-bar {
+          padding: 12px 16px; background: #202c33; display: flex; gap: 10px; align-items: center;
+        }
+        .chat-input-bar input {
+          flex: 1; padding: 12px 16px; border-radius: 8px; border: none;
+          background: #2a3942; color: #e9edef; font-size: 14px; outline: none;
+        }
+        .chat-input-bar button {
+          padding: 12px 20px; background: #00a884; color: #111b21; border: none;
+          border-radius: 8px; font-weight: 700; cursor: pointer;
+        }
+        .chat-input-bar button:disabled { background: #2a3942; color: #8696a0; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+
+<!-- AUTHENTICATION MODAL (LOGIN & REGISTER WITH LIVE GPS) -->
+<div id="auth-modal">
+    <div class="auth-card">
+        <h2>Conekt</h2>
+        <p>Sign in or create a new account to start chatting</p>
+
+        <div class="auth-tabs">
+            <button class="auth-tab active" id="tab-login" onclick="toggleAuthMode('login')">Login</button>
+            <button class="auth-tab" id="tab-register" onclick="toggleAuthMode('register')">Create Account</button>
+        </div>
+
+        <div class="auth-error" id="auth-error"></div>
+
+        <input type="text" id="auth-username" placeholder="Username" />
+        <input type="password" id="auth-password" placeholder="Password" />
+
+        <div id="register-fields" style="display:none;">
+            <input type="text" id="auth-bio" placeholder="Short bio (optional)" />
+        </div>
+
+        <div class="gps-box" id="gps-status">Detecting your live GPS location...</div>
+
+        <button class="submit-btn" id="auth-submit-btn" onclick="submitAuth()">Login</button>
+    </div>
+</div>
+
+<!-- LEFT SIDEBAR -->
+<div class="sidebar">
+    <div class="sidebar-header">
+        <div class="me-badge">
+            <span class="dot-online"></span>
+            <span id="current-user-label">Not Connected</span>
+        </div>
+        <div style="display:flex; gap:10px;">
+            <button style="background:none;border:none;color:#00a884;cursor:pointer;font-size:12px;" onclick="loadAllUsers()">Refresh</button>
+            <button style="background:none;border:none;color:#8696a0;cursor:pointer;font-size:12px;" onclick="location.reload()">Logout</button>
+        </div>
+    </div>
+
+    <div class="tab-bar">
+        <button class="tab-btn active" id="tab-chats" onclick="switchTab('chats')">All Users</button>
+        <button class="tab-btn" id="tab-radar" onclick="switchTab('radar')">Radar Map</button>
+    </div>
+
+    <div class="contact-list" id="contact-list"></div>
+
+    <div id="radar-panel">
+        <div class="radar-controls">
+            <span style="font-size:12px; color:#8696a0;">Radius (km):</span>
+            <input type="number" id="radius" value="5" min="1" max="100" />
+            <button onclick="fetchNearbyUsers()">Scan Nearby</button>
+        </div>
+        <div id="map"></div>
+    </div>
+</div>
+
+<!-- RIGHT CHAT WORKSPACE -->
+<div class="chat-area">
+    <div class="chat-header">
+        <div class="chat-header-title">
+            <h3 id="active-chat-name">Select a user to start chatting</h3>
+            <div class="chat-header-sub" id="active-chat-status"></div>
+        </div>
+    </div>
+
+    <div class="messages-box" id="messages-box">
+        <div class="empty-state">Create multiple accounts in separate tabs to test real-time messaging!</div>
+    </div>
+
+    <div class="chat-input-bar">
+        <input type="text" id="msg-input" placeholder="Type a message..." disabled onkeyup="handleTyping(event)" />
+        <button id="send-btn" onclick="sendMessage()" disabled>Send</button>
+    </div>
+</div>
+
+<script>
+    let authMode = 'login';
+    let stompClient = null;
+    let currentUser = null;
+    let activeRecipientId = null;
+    let onlineUsers = new Set();
+    let typingTimeout = null;
+    let isTypingSent = false;
+
+    let userLng = null;
+    let userLat = null;
+
+    const contacts = new Map();
+
+    // Automatically fetch real device GPS coordinates on page load
+    function detectRealLocation() {
+      const gpsEl = document.getElementById('gps-status');
+      if (!navigator.geolocation) {
+        gpsEl.innerText = 'Geolocation is not supported by your browser.';
+        gpsEl.style.color = '#f15c6d';
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          userLng = position.coords.longitude;
+          userLat = position.coords.latitude;
+          gpsEl.innerText = `Live GPS Locked: ${userLat.toFixed(4)}, ${userLng.toFixed(4)}`;
+          gpsEl.style.color = '#00a884';
+        },
+        (err) => {
+          gpsEl.innerText = 'Location permission denied. Please allow GPS access in browser.';
+          gpsEl.style.color = '#f15c6d';
+          console.warn('GPS Error:', err.message);
+        },
+        { enableHighAccuracy: true }
+      );
+    }
+
+    detectRealLocation();
+
+    function toggleAuthMode(mode) {
+      authMode = mode;
+      document.getElementById('tab-login').classList.toggle('active', mode === 'login');
+      document.getElementById('tab-register').classList.toggle('active', mode === 'register');
+      document.getElementById('register-fields').style.display = mode === 'register' ? 'block' : 'none';
+      document.getElementById('auth-submit-btn').innerText = mode === 'login' ? 'Login' : 'Create Account & Join';
+      document.getElementById('auth-error').innerText = '';
+    }
+
+    async function submitAuth() {
+      const userName = document.getElementById('auth-username').value.trim();
+      const password = document.getElementById('auth-password').value.trim();
+      const errorEl = document.getElementById('auth-error');
+
+      if (!userName || !password) {
+        errorEl.innerText = 'Please enter both username and password.';
+        return;
+      }
+
+      if (authMode === 'register' && (userLng === null || userLat === null)) {
+        errorEl.innerText = 'Waiting for GPS lock. Please allow browser location access.';
+        return;
+      }
+
+      const endpoint = authMode === 'login' ? '/api/users/login' : '/api/users/register';
+      const body = authMode === 'login'
+        ? { userName, password }
+        : {
+            userName,
+            password,
+            bio: document.getElementById('auth-bio').value.trim(),
+            longitude: userLng,
+            latitude: userLat
+          };
+
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          errorEl.innerText = data.error || 'Authentication failed';
+          return;
+        }
+
+        currentUser = data;
+
+        // Refresh user's live GPS coordinates in MongoDB upon login
+        if (authMode === 'login' && userLng !== null && userLat !== null) {
+          await fetch(`/api/users/${currentUser.id}/location?longitude=${userLng}&latitude=${userLat}`, {
+            method: 'PUT'
+          });
+          currentUser.location = { coordinates: [userLng, userLat] };
+        } else if (currentUser.location && currentUser.location.coordinates) {
+          userLng = currentUser.location.coordinates[0];
+          userLat = currentUser.location.coordinates[1];
+        }
+
+        document.getElementById('current-user-label').innerText = currentUser.userName;
+        document.getElementById('auth-modal').style.display = 'none';
+
+        await loadAllUsers();
+        connectWebSocket();
+      } catch (e) {
+        errorEl.innerText = 'Cannot connect to server.';
+      }
+    }
+
+    async function loadAllUsers() {
+      try {
+        const res = await fetch('/api/users');
+        if (!res.ok) return;
+        const users = await res.json();
+
+        users.forEach(u => {
+          if (u.id === currentUser.id) return;
+          if (!contacts.has(u.id)) {
+            contacts.set(u.id, {
+              id: u.id,
+              name: u.userName,
+              lastMsg: u.bio || 'Tap to start chatting',
+              unread: 0
+            });
+          }
+        });
+        renderContacts();
+      } catch (e) { console.error("Failed to load users:", e); }
+    }
+
+    function connectWebSocket() {
+      const socket = new SockJS('/ws-chat');
+      stompClient = Stomp.over(socket);
+      stompClient.debug = null;
+
+      stompClient.connect({ userId: currentUser.id }, async () => {
+        try {
+          const res = await fetch('/api/users/online');
+          if (res.ok) {
+            onlineUsers = new Set(await res.json());
+            renderContacts();
+            updateHeaderPresence();
+          }
+        } catch (e) { console.error(e); }
+
+        // 1. Presence Updates
+        stompClient.subscribe('/topic/presence', async (frame) => {
+          onlineUsers = new Set(JSON.parse(frame.body));
+          for (const uid of onlineUsers) {
+            if (uid !== currentUser.id && !contacts.has(uid)) {
+              await loadAllUsers();
+              break;
+            }
+          }
+          renderContacts();
+          updateHeaderPresence();
+        });
+
+        // 2. Incoming Private Messages
+        stompClient.subscribe(`/user/${currentUser.id}/queue/messages`, async (frame) => {
+          const msg = JSON.parse(frame.body);
+
+          if (!contacts.has(msg.senderId)) {
+            contacts.set(msg.senderId, {
+              id: msg.senderId,
+              name: msg.senderName || 'User',
+              lastMsg: msg.content,
+              unread: 0
+            });
+          }
+
+          const contact = contacts.get(msg.senderId);
+          contact.lastMsg = msg.content;
+
+          if (activeRecipientId === msg.senderId) {
+            appendMessageBubble(msg, 'received');
+            sendReadReceipt(msg.senderId);
+          } else {
+            contact.unread = (contact.unread || 0) + 1;
+          }
+          renderContacts();
+        });
+
+        // 3. Delivery Status Updates
+        stompClient.subscribe(`/user/${currentUser.id}/queue/status`, (frame) => {
+          const updatedMsg = JSON.parse(frame.body);
+          updateMessageTick(updatedMsg.status);
+        });
+
+        // 4. Read Receipts
+        stompClient.subscribe(`/user/${currentUser.id}/queue/read-receipts`, (frame) => {
+          const receipt = JSON.parse(frame.body);
+          if (activeRecipientId === receipt.readerId) {
+            document.querySelectorAll('.ticks').forEach(el => {
+              el.innerText = '✓✓';
+              el.className = 'ticks READ';
+            });
+          }
+        });
+
+        // 5. Typing Indicators
+        stompClient.subscribe(`/user/${currentUser.id}/queue/typing`, (frame) => {
+          const event = JSON.parse(frame.body);
+          if (activeRecipientId === event.senderId) {
+            const statusEl = document.getElementById('active-chat-status');
+            if (event.typing) {
+              statusEl.innerText = 'typing...';
+              statusEl.style.color = '#00a884';
+            } else {
+              updateHeaderPresence();
+            }
+          }
+        });
+      });
+    }
+
+    function renderContacts() {
+      const listEl = document.getElementById('contact-list');
+      listEl.innerHTML = '';
+
+      if (contacts.size === 0) {
+        listEl.innerHTML = '<div style="padding:20px;text-align:center;color:#8696a0;font-size:13px;">No other users registered yet. Open a second tab and create another user!</div>';
+        return;
+      }
+
+      contacts.forEach((c) => {
+        const isOnline = onlineUsers.has(c.id);
+        const div = document.createElement('div');
+        div.className = `contact-item ${activeRecipientId === c.id ? 'active' : ''}`;
+        div.onclick = () => openChat(c.id, c.name);
+
+        div.innerHTML = `
+          <div class="contact-info">
+            <h4><span class="${isOnline ? 'dot-online' : 'dot-offline'}"></span> ${c.name}</h4>
+            <span>${c.lastMsg}</span>
+          </div>
+          <span class="unread-badge" style="display: ${c.unread > 0 ? 'inline-block' : 'none'}">${c.unread}</span>
+        `;
+        listEl.appendChild(div);
+      });
+    }
+
+    async function openChat(recipientId, recipientName) {
+      activeRecipientId = recipientId;
+
+      if (!contacts.has(recipientId)) {
+        contacts.set(recipientId, { id: recipientId, name: recipientName, lastMsg: "", unread: 0 });
+      }
+      contacts.get(recipientId).unread = 0;
+      renderContacts();
+
+      document.getElementById('active-chat-name').innerText = recipientName;
+      updateHeaderPresence();
+
+      const input = document.getElementById('msg-input');
+      const btn = document.getElementById('send-btn');
+      input.disabled = false;
+      btn.disabled = false;
+      input.focus();
+
+      const box = document.getElementById('messages-box');
+      box.innerHTML = '';
+
+      try {
+        const res = await fetch(`/api/messages/${currentUser.id}/${recipientId}`);
+        if (res.ok) {
+          const history = await res.json();
+          history.forEach(msg => {
+            const side = msg.senderId === currentUser.id ? 'sent' : 'received';
+            appendMessageBubble(msg, side);
+          });
+          sendReadReceipt(recipientId);
+        }
+      } catch (e) { console.error("History load error:", e); }
+    }
+
+    function sendMessage() {
+      const input = document.getElementById('msg-input');
+      const content = input.value.trim();
+      if (!content || !stompClient || !activeRecipientId) return;
+
+      const payload = {
+        senderId: currentUser.id,
+        recipientId: activeRecipientId,
+        senderName: currentUser.userName,
+        content: content,
+        type: 'CHAT'
+      };
+
+      stompClient.send('/app/chat.send', {}, JSON.stringify(payload));
+      sendTypingState(false);
+
+      appendMessageBubble({
+        content: content,
+        timestamp: new Date().toISOString(),
+        status: onlineUsers.has(activeRecipientId) ? 'DELIVERED' : 'SENT'
+      }, 'sent');
+
+      contacts.get(activeRecipientId).lastMsg = `You: ${content}`;
+      renderContacts();
+      input.value = '';
+    }
+
+    function appendMessageBubble(msg, side) {
+      const box = document.getElementById('messages-box');
+      const empty = box.querySelector('.empty-state');
+      if (empty) empty.remove();
+
+      const row = document.createElement('div');
+      row.className = `msg-row ${side}`;
+
+      const timeStr = msg.timestamp
+        ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : '';
+
+      let tickHtml = '';
+      if (side === 'sent') {
+        const status = msg.status || 'SENT';
+        const symbol = status === 'SENT' ? '✓' : '✓✓';
+        tickHtml = `<span class="ticks ${status}">${symbol}</span>`;
+      }
+
+      row.innerHTML = `
+        <div class="msg-bubble">
+          <div>${msg.content}</div>
+          <div class="msg-meta">
+            <span>${timeStr}</span>
+            ${tickHtml}
+          </div>
+        </div>
+      `;
+      box.appendChild(row);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function updateMessageTick(status) {
+      const rows = document.querySelectorAll('.msg-row.sent');
+      if (rows.length === 0) return;
+      const tickEl = rows[rows.length - 1].querySelector('.ticks');
+      if (tickEl) {
+        tickEl.innerText = status === 'SENT' ? '✓' : '✓✓';
+        tickEl.className = `ticks ${status}`;
+      }
+    }
+
+    function sendReadReceipt(senderId) {
+      if (!stompClient) return;
+      stompClient.send('/app/chat.read', {}, JSON.stringify({
+        readerId: currentUser.id,
+        senderId: senderId
+      }));
+    }
+
+    function handleTyping(e) {
+      if (e.key === 'Enter') {
+        sendMessage();
+        return;
+      }
+      if (!isTypingSent) {
+        sendTypingState(true);
+        isTypingSent = true;
+      }
+      clearTimeout(typingTimeout);
+      typingTimeout = setTimeout(() => {
+        sendTypingState(false);
+        isTypingSent = false;
+      }, 1500);
+    }
+
+    function sendTypingState(isTyping) {
+      if (!stompClient || !activeRecipientId) return;
+      stompClient.send('/app/chat.typing', {}, JSON.stringify({
+        senderId: currentUser.id,
+        recipientId: activeRecipientId,
+        typing: isTyping
+      }));
+    }
+
+    function updateHeaderPresence() {
+      if (!activeRecipientId) return;
+      const statusEl = document.getElementById('active-chat-status');
+      statusEl.innerText = onlineUsers.has(activeRecipientId) ? 'Online' : 'Offline';
+      statusEl.style.color = onlineUsers.has(activeRecipientId) ? '#00a884' : '#8696a0';
+    }
+
+    // --- RADAR MAP TAB ---
+    let map = null;
+    let markersLayer = null;
+    let radiusCircle = null;
+
+    function switchTab(tab) {
+      document.getElementById('tab-chats').classList.toggle('active', tab === 'chats');
+      document.getElementById('tab-radar').classList.toggle('active', tab === 'radar');
+      document.getElementById('contact-list').style.display = tab === 'chats' ? 'block' : 'none';
+      document.getElementById('radar-panel').style.display = tab === 'radar' ? 'flex' : 'none';
+
+      if (tab === 'radar' && !map) {
+        const startLat = userLat || 19.0760;
+        const startLng = userLng || 72.8777;
+        map = L.map('map').setView([startLat, startLng], 15);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+        markersLayer = L.layerGroup().addTo(map);
+        fetchNearbyUsers();
+      } else if (map) {
+        setTimeout(() => map.invalidateSize(), 100);
+      }
+    }
+
+    async function fetchNearbyUsers() {
+      if (userLng === null || userLat === null) return;
+      const radius = document.getElementById('radius').value || 5;
+      markersLayer.clearLayers();
+
+      if (radiusCircle) {
+        map.removeLayer(radiusCircle);
+      }
+
+      // Draw your own location marker & radar circle
+      L.circleMarker([userLat, userLng], {
+        radius: 8, color: '#00a884', fillColor: '#00a884', fillOpacity: 1
+      }).addTo(markersLayer).bindPopup('<b>You</b>');
+
+      radiusCircle = L.circle([userLat, userLng], {
+        color: '#00a884', weight: 1, fillColor: '#00a884', fillOpacity: 0.1, radius: radius * 1000
+      }).addTo(map);
+
+      map.setView([userLat, userLng], 14);
+
+      try {
+        const res = await fetch(`/api/users/nearby?longitude=${userLng}&latitude=${userLat}&maxDistanceKm=${radius}&page=0&size=50`);
+        const data = await res.json();
+        const users = data.content || data;
+
+        users.forEach(u => {
+          if (u.id === currentUser.id || !u.location) return;
+          const [uLng, uLat] = u.location.coordinates;
+          const marker = L.marker([uLat, uLng]).addTo(markersLayer);
+          marker.bindPopup(`<b>${u.userName}</b><br><button style="margin-top:4px;padding:4px 8px;background:#00a884;border:none;border-radius:4px;cursor:pointer;" onclick="switchTab('chats'); openChat('${u.id}', '${u.userName}')">Message</button>`);
+        });
+      } catch (e) { console.error("Radar error:", e); }
+    }
+</script>
+</body>
+</html>
