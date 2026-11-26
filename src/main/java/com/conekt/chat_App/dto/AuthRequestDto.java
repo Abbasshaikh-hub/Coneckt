@@ -6,6 +6,8 @@ import lombok.Data;
 public class AuthRequestDto {
     private String userName;
     private String password;
+    private String email;
+    private String otp;
     private String bio;
     private Double longitude;
     private Double latitude;

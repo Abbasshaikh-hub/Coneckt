@@ -1,17 +1,14 @@
 package com.conekt.chat_App.controller;
 
 
-import com.conekt.chat_App.Service.UserService;
+import com.conekt.chat_App.service.OtpService;
+import com.conekt.chat_App.service.UserService;
 import com.conekt.chat_App.dto.AuthRequestDto;
 import com.conekt.chat_App.dto.UserRequestDto;
 import com.conekt.chat_App.entity.AppUser;
 import com.conekt.chat_App.repository.UserRepository;
 import com.conekt.chat_App.security.JwtUtil;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Slice;
-import org.springframework.data.geo.Distance;
-import org.springframework.data.geo.Metrics;
-import org.springframework.data.geo.Point;
 import org.springframework.data.mongodb.core.geo.GeoJsonPoint;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -33,12 +30,14 @@ public class UserController {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
+    private final OtpService otpService;
 
-    public UserController(UserService userService, UserRepository userRepository, PasswordEncoder passwordEncoder, JwtUtil jwtUtil) {
+    public UserController(UserService userService, UserRepository userRepository, PasswordEncoder passwordEncoder, JwtUtil jwtUtil, OtpService otpService) {
         this.userService = userService;
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtUtil = jwtUtil;
+        this.otpService = otpService;
     }
 
 
@@ -58,12 +57,18 @@ public class UserController {
     @PostMapping("/register")
     public ResponseEntity<?> registerUser(@RequestBody AuthRequestDto payload) {
         String userName = payload.getUserName();
+        String email = payload.getEmail();
         String password = payload.getPassword();
         String bio = (payload.getBio() != null && !payload.getBio().isBlank())
                 ? payload.getBio() : "Hey there! I am using Conekt.";
 
         if (userName == null || userName.isBlank() || password == null || password.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Username and password are required"));
+        }
+
+        if (!otpService.verifyOtp(payload.getEmail(), payload.getOtp())) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("error", "Invalid or expired OTP. Please request a new code."));
         }
 
         if (userRepository.findByUserNameIgnoreCase(userName.trim()).isPresent()) {
@@ -76,6 +81,7 @@ public class UserController {
 
         AppUser newUser = new AppUser();
         newUser.setUserName(userName.trim());
+        newUser.setEmail(email.trim().toLowerCase());
         newUser.setPassword(passwordEncoder.encode(password));
         newUser.setBio(bio);
         newUser.setLocation(new GeoJsonPoint(lng, lat));
@@ -152,6 +158,34 @@ public class UserController {
         Slice<AppUser> nearbyUsersPage = userService.findNearbyUser(longitude, latitude, maxDistanceKm, page, size);
         nearbyUsersPage.forEach(u -> u.setPassword(null));
         return ResponseEntity.ok(nearbyUsersPage);
+    }
+
+    @PostMapping("/send-otp")
+    public ResponseEntity<?> sendOtp(@RequestBody AuthRequestDto payload) {
+        String userName = payload.getUserName();
+        String email = payload.getEmail();
+
+        if (userName == null || userName.isBlank() || email == null || !email.contains("@")) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Valid username and Gmail address are required"));
+        }
+
+        if (userRepository.findByUserNameIgnoreCase(userName.trim()).isPresent()) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(Map.of("error", "Username already taken"));
+        }
+
+        if (userRepository.findByEmailIgnoreCase(email.trim()).isPresent()) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(Map.of("error", "Email is already registered"));
+        }
+
+        try {
+            otpService.generateAndSendOtp(email);
+            return ResponseEntity.ok(Map.of("message", "OTP sent to " + email.trim()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Failed to send email. Check Gmail SMTP config."));
+        }
     }
 
     // 4. UPDATE USER'S REAL-TIME GPS LOCATION

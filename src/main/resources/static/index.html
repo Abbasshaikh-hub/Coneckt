@@ -39,7 +39,7 @@
         }
         .auth-card {
             background: var(--header-bg); padding: 28px; border-radius: 14px;
-            width: 360px; box-shadow: 0 12px 32px rgba(0,0,0,0.6); text-align: center;
+            width: 375px; box-shadow: 0 12px 32px rgba(0,0,0,0.6); text-align: center;
         }
         .auth-card h1 { color: var(--accent); margin-bottom: 6px; font-size: 26px; }
         .auth-card p { color: var(--text-secondary); font-size: 13px; margin-bottom: 18px; }
@@ -55,6 +55,19 @@
             outline: none; font-size: 14px;
         }
         .auth-card input:focus { border-color: var(--accent); }
+        .otp-input {
+            letter-spacing: 6px; text-align: center; font-size: 18px !important; font-weight: 700;
+        }
+        .otp-row {
+            display: flex; gap: 8px; align-items: center; margin-bottom: 12px;
+        }
+        .otp-row input { margin-bottom: 0; flex: 1; }
+        .resend-btn {
+            background: var(--input-bg); color: var(--accent); border: 1px solid var(--border-color);
+            padding: 11px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer;
+            white-space: nowrap;
+        }
+        .resend-btn:disabled { color: var(--text-secondary); cursor: not-allowed; opacity: 0.6; }
         .gps-pill {
             background: var(--panel-bg); padding: 8px; border-radius: 8px; font-size: 12px;
             color: var(--accent); margin-bottom: 14px; border: 1px solid var(--border-color);
@@ -64,7 +77,9 @@
             color: #0b141a; font-weight: 700; cursor: pointer; font-size: 15px;
         }
         .btn-primary:hover { background: var(--accent-hover); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
         .error-text { color: var(--danger); font-size: 12px; margin-bottom: 10px; min-height: 16px; }
+        .info-text { color: var(--accent); font-size: 12px; margin-bottom: 10px; }
 
         /* Main Layout */
         #sidebar {
@@ -130,12 +145,10 @@
         .radar-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
         #map { flex: 1; width: 100%; z-index: 1; background: #141c22; }
 
-        /* Dark Mode filter for OpenStreetMap tiles (zero API key needed) */
         .dark-map-tiles {
             filter: invert(100%) hue-rotate(180deg) brightness(92%) contrast(90%);
         }
 
-        /* Custom Radar User Pins */
         .custom-pin {
             display: flex; align-items: center; justify-content: center;
             width: 36px; height: 36px; border-radius: 50%;
@@ -144,11 +157,8 @@
             cursor: pointer; transition: transform 0.15s ease;
         }
         .custom-pin:hover { transform: scale(1.15); }
-        .custom-pin.me {
-            background: #3b82f6; color: #ffffff;
-        }
+        .custom-pin.me { background: #3b82f6; color: #ffffff; }
 
-        /* Dark Leaflet Popup Card */
         .leaflet-popup-content-wrapper {
             background: #202c33 !important; color: #e9edef !important;
             border-radius: 12px !important; box-shadow: 0 8px 24px rgba(0,0,0,0.65) !important;
@@ -206,11 +216,11 @@
 </head>
 <body>
 
-<!-- Auth Modal -->
+<!-- Auth Modal with Gmail OTP Verification -->
 <div id="auth-overlay">
     <div class="auth-card">
         <h1>Conekt</h1>
-        <p>Sign in or create a new account to start chatting</p>
+        <p>Verified hyperlocal real-time messaging</p>
 
         <div class="auth-tabs">
             <button class="auth-tab active" id="tab-login" onclick="switchAuthMode('login')">Login</button>
@@ -218,10 +228,18 @@
         </div>
 
         <div class="error-text" id="auth-error"></div>
+        <div class="info-text" id="auth-info" style="display:none;"></div>
 
         <input type="text" id="auth-username" placeholder="Username" />
+        <input type="email" id="auth-email" placeholder="Gmail Address (e.g., you@gmail.com)" style="display:none;" />
         <input type="password" id="auth-password" placeholder="Password" />
         <input type="text" id="auth-bio" placeholder="Short Bio (e.g., Java Dev in Mumbai)" style="display:none;" />
+
+        <!-- Step 2: 6-Digit OTP Input (Appears after OTP is emailed) -->
+        <div class="otp-row" id="otp-section" style="display:none;">
+            <input type="text" id="auth-otp" class="otp-input" maxlength="6" placeholder="000000" />
+            <button type="button" class="resend-btn" id="resend-otp-btn" onclick="requestOtp()">Resend</button>
+        </div>
 
         <div class="gps-pill" id="gps-status">Detecting live GPS...</div>
 
@@ -289,6 +307,9 @@
 
 <script>
     let authMode = 'login';
+    let otpSent = false;
+    let resendTimer = null;
+
     let jwtToken = localStorage.getItem('conekt_token');
     let currentUser = JSON.parse(localStorage.getItem('conekt_user') || 'null');
     let activePartner = null;
@@ -300,7 +321,6 @@
     let markersLayer = null;
     let typingTimeout = null;
 
-    // Cache discovered users so clicking a pin's "Chat" button opens their conversation cleanly
     const discoveredUsers = new Map();
     const activeContacts = new Map();
     const unreadCounts = {};
@@ -319,7 +339,6 @@
         });
     }
 
-    // 1. Detect GPS on Load + Auto-Resume JWT Session
     window.onload = () => {
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(
@@ -345,17 +364,40 @@
 
     function switchAuthMode(mode) {
         authMode = mode;
+        otpSent = false;
+        clearInterval(resendTimer);
+
         document.getElementById('auth-error').innerText = '';
+        document.getElementById('auth-info').style.display = 'none';
         document.getElementById('tab-login').classList.toggle('active', mode === 'login');
         document.getElementById('tab-register').classList.toggle('active', mode === 'register');
-        document.getElementById('auth-bio').style.display = mode === 'register' ? 'block' : 'none';
-        document.getElementById('auth-submit-btn').innerText = mode === 'login' ? 'Sign In' : 'Create Account & Join';
+
+        const isReg = mode === 'register';
+        document.getElementById('auth-email').style.display = isReg ? 'block' : 'none';
+        document.getElementById('auth-bio').style.display = isReg ? 'block' : 'none';
+        document.getElementById('otp-section').style.display = 'none';
+        document.getElementById('auth-otp').value = '';
+
+        // Re-enable fields if switching tabs
+        document.getElementById('auth-username').disabled = false;
+        document.getElementById('auth-email').disabled = false;
+
+        document.getElementById('auth-submit-btn').innerText = isReg ? 'Send Gmail OTP' : 'Sign In';
     }
 
     async function handleAuthSubmit() {
+        if (authMode === 'login') {
+            await performLogin();
+        } else if (!otpSent) {
+            await requestOtp();
+        } else {
+            await verifyOtpAndRegister();
+        }
+    }
+
+    async function performLogin() {
         const userName = document.getElementById('auth-username').value.trim();
         const password = document.getElementById('auth-password').value.trim();
-        const bio = document.getElementById('auth-bio').value.trim();
         const errorBox = document.getElementById('auth-error');
 
         if (!userName || !password) {
@@ -363,19 +405,16 @@
             return;
         }
 
-        const endpoint = authMode === 'login' ? '/api/users/login' : '/api/users/register';
-        const payload = { userName, password, bio, longitude: userLng, latitude: userLat };
-
         try {
-            const res = await fetch(endpoint, {
+            const res = await fetch('/api/users/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                body: JSON.stringify({ userName, password, longitude: userLng, latitude: userLat })
             });
             const data = await res.json();
 
             if (!res.ok) {
-                errorBox.innerText = data.error || 'Authentication failed.';
+                errorBox.innerText = data.error || 'Invalid credentials.';
                 return;
             }
 
@@ -383,10 +422,134 @@
             currentUser = data.user;
             localStorage.setItem('conekt_token', jwtToken);
             localStorage.setItem('conekt_user', JSON.stringify(currentUser));
-
             enterWorkspace();
         } catch (err) {
             errorBox.innerText = 'Cannot connect to server.';
+        }
+    }
+
+    async function requestOtp() {
+        const userName = document.getElementById('auth-username').value.trim();
+        const email = document.getElementById('auth-email').value.trim();
+        const password = document.getElementById('auth-password').value.trim();
+        const errorBox = document.getElementById('auth-error');
+        const infoBox = document.getElementById('auth-info');
+        const submitBtn = document.getElementById('auth-submit-btn');
+
+        errorBox.innerText = '';
+        infoBox.style.display = 'none';
+
+        if (!userName || !email || !email.includes('@') || !password) {
+            errorBox.innerText = 'Enter username, valid Gmail address, and password.';
+            return;
+        }
+
+        submitBtn.disabled = true;
+        submitBtn.innerText = 'Sending OTP...';
+
+        try {
+            const res = await fetch('/api/users/send-otp', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userName, email })
+            });
+            const data = await res.json();
+
+            if (!res.ok) {
+                errorBox.innerText = data.error || 'Could not send OTP.';
+                submitBtn.disabled = false;
+                submitBtn.innerText = otpSent ? 'Verify & Create Account' : 'Send Gmail OTP';
+                return;
+            }
+
+            otpSent = true;
+            document.getElementById('auth-username').disabled = true;
+            document.getElementById('auth-email').disabled = true;
+            document.getElementById('otp-section').style.display = 'flex';
+            document.getElementById('auth-otp').focus();
+
+            infoBox.innerText = `6-digit OTP sent to ${email}. Check Inbox or Spam.`;
+            infoBox.style.display = 'block';
+
+            submitBtn.disabled = false;
+            submitBtn.innerText = 'Verify & Create Account';
+            startResendCooldown();
+        } catch (err) {
+            errorBox.innerText = 'Server error while sending OTP.';
+            submitBtn.disabled = false;
+            submitBtn.innerText = 'Send Gmail OTP';
+        }
+    }
+
+    function startResendCooldown() {
+        const resendBtn = document.getElementById('resend-otp-btn');
+        let seconds = 60;
+        resendBtn.disabled = true;
+        resendBtn.innerText = `${seconds}s`;
+
+        clearInterval(resendTimer);
+        resendTimer = setInterval(() => {
+            seconds--;
+            if (seconds <= 0) {
+                clearInterval(resendTimer);
+                resendBtn.disabled = false;
+                resendBtn.innerText = 'Resend';
+            } else {
+                resendBtn.innerText = `${seconds}s`;
+            }
+        }, 1000);
+    }
+
+    async function verifyOtpAndRegister() {
+        const userName = document.getElementById('auth-username').value.trim();
+        const email = document.getElementById('auth-email').value.trim();
+        const password = document.getElementById('auth-password').value.trim();
+        const bio = document.getElementById('auth-bio').value.trim();
+        const otp = document.getElementById('auth-otp').value.trim();
+        const errorBox = document.getElementById('auth-error');
+        const submitBtn = document.getElementById('auth-submit-btn');
+
+        if (otp.length !== 6) {
+            errorBox.innerText = 'Please enter the 6-digit OTP sent to your Gmail.';
+            return;
+        }
+
+        submitBtn.disabled = true;
+        submitBtn.innerText = 'Verifying...';
+
+        try {
+            const res = await fetch('/api/users/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    userName,
+                    email,
+                    password,
+                    bio,
+                    otp,
+                    longitude: userLng,
+                    latitude: userLat
+                })
+            });
+            const data = await res.json();
+
+            if (!res.ok) {
+                errorBox.innerText = data.error || 'OTP verification failed.';
+                submitBtn.disabled = false;
+                submitBtn.innerText = 'Verify & Create Account';
+                return;
+            }
+
+            clearInterval(resendTimer);
+            jwtToken = data.token;
+            currentUser = data.user;
+            localStorage.setItem('conekt_token', jwtToken);
+            localStorage.setItem('conekt_user', JSON.stringify(currentUser));
+            enterWorkspace();
+        } catch (err) {
+            errorBox.innerText = 'Cannot connect to server.';
+            submitBtn.disabled = false;
+            submitBtn.innerText = 'Verify & Create Account';
         }
     }
 
@@ -395,7 +558,7 @@
         document.getElementById('current-username').innerText = currentUser.userName;
         syncLiveLocation();
         connectWebSocket();
-        renderChatsList();
+        loadSmartInbox();
     }
 
     function logout() {
@@ -412,7 +575,7 @@
         }).catch(() => {});
     }
 
-    // 2. WebSocket Connection with JWT Header
+    // WebSocket Connection with JWT Header
     function connectWebSocket() {
         const socket = new SockJS('/ws-chat');
         stompClient = Stomp.over(socket);
@@ -491,6 +654,28 @@
                 activeContacts.set(found.id, found);
             }
         } catch (e) {}
+    }
+    async function loadSmartInbox() {
+        try {
+            const res = await authFetch(`/api/conversations/${currentUser.id}`);
+            const conversations = await res.json();
+
+            activeContacts.clear();
+            conversations.forEach(conv => {
+                const prefix = conv.lastSenderId === currentUser.id ? 'You: ' : '';
+                activeContacts.set(conv.partnerId, {
+                    id: conv.partnerId,
+                    userName: conv.partnerName,
+                    bio: conv.partnerBio,
+                    online: conv.online,
+                    lastPreview: prefix + (conv.lastMessage || '')
+                });
+                unreadCounts[conv.partnerId] = conv.unreadCount || 0;
+            });
+        } catch (err) {
+            console.error('Failed to load smart inbox:', err);
+        }
+        renderChatsList();
     }
 
     function renderChatsList() {
@@ -646,7 +831,7 @@
         }, 1200);
     }
 
-    // 3. Pin-Only Radar Map (OpenStreetMap Dark Filter — No API Key Needed)
+    // Pin-Only Radar Map (OpenStreetMap Dark Filter)
     function switchSidebarTab(tab) {
         document.getElementById('nav-chats').classList.toggle('active', tab === 'chats');
         document.getElementById('nav-radar').classList.toggle('active', tab === 'radar');
@@ -715,7 +900,6 @@
             nearbyUsers.forEach((user, index) => {
                 discoveredUsers.set(user.id, user);
 
-                // Extract coordinates (supports both Jackson 3 {x, y} and {coordinates: [lng, lat]})
                 let lng = userLng;
                 let lat = userLat;
                 if (user.location) {
@@ -727,7 +911,6 @@
                     }
                 }
 
-                // Slight visual jitter (~35 meters) ONLY when testing multiple accounts on the exact same PC
                 if (Math.abs(lat - userLat) < 0.00005 && Math.abs(lng - userLng) < 0.00005) {
                     const angle = (index + 1) * (Math.PI / 2.5);
                     lat += Math.sin(angle) * 0.00045;

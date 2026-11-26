@@ -36,6 +36,7 @@ public class SecurityConfig {
                                 "/",
                                 "/index.html",
                                 "/favicon.ico",
+                                "/api/users/send-otp",
                                 "/api/users/register",
                                 "/api/users/login",
                                 "/ws-chat/**"

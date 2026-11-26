@@ -1,9 +1,11 @@
 package com.conekt.chat_App.controller;
 
+import com.conekt.chat_App.dto.ConversationSummaryDto;
 import com.conekt.chat_App.entity.ChatMessage;
 //import org.springframework.messaging.simp.SimpMessagingTemplate;
 import com.conekt.chat_App.config.WebSocketPresenceTracker;
 import com.conekt.chat_App.repository.ChatMessageRepository;
+import com.conekt.chat_App.service.ConversationService;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
@@ -31,16 +33,16 @@ public class ChatController {
     private final ChatMessageRepository chatMessageRepository;
     private final WebSocketPresenceTracker presenceTracker;
     private final MongoTemplate mongoTemplate;
+    private final ConversationService conversationService;
 
-    public ChatController(SimpMessagingTemplate messagingTemplate,
-                          ChatMessageRepository chatMessageRepository,
-                          WebSocketPresenceTracker presenceTracker,
-                          MongoTemplate mongoTemplate){
+    public ChatController(SimpMessagingTemplate messagingTemplate, ChatMessageRepository chatMessageRepository, WebSocketPresenceTracker presenceTracker, MongoTemplate mongoTemplate, ConversationService conversationService) {
         this.messagingTemplate = messagingTemplate;
         this.chatMessageRepository = chatMessageRepository;
         this.presenceTracker = presenceTracker;
         this.mongoTemplate = mongoTemplate;
+        this.conversationService = conversationService;
     }
+
 
     // ==========================================
     // 1. REAL-TIME WEBSOCKET MESSAGE HANDLING
@@ -123,5 +125,10 @@ public class ChatController {
     @ResponseBody
     public ResponseEntity<Set<String>> getOnlineUsers(){
         return ResponseEntity.ok(presenceTracker.getOnlineUsers());
+    }
+
+    @GetMapping("/api/conversations/{userId}")
+    public ResponseEntity<List<ConversationSummaryDto>> getSmartInbox(@PathVariable String userId) {
+        return ResponseEntity.ok(conversationService.getSmartInbox(userId));
     }
 }

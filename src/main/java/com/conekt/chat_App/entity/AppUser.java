@@ -26,6 +26,7 @@ public class AppUser {
     private String profilePicUrl;
     private String bio;
     private String currentVenue;
+    private String email;
 
     // Determines Green Ring (true) vs Red/Dark Ring (false)
     private boolean isPublic = true;

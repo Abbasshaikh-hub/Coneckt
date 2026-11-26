@@ -17,4 +17,5 @@ import java.util.Optional;
 public interface UserRepository extends MongoRepository<AppUser, String> {
     Slice<AppUser> findByLocationNear(Point point, Distance distance, Pageable pageable);
     Optional<AppUser> findByUserNameIgnoreCase(String userName);
+    Optional<AppUser> findByEmailIgnoreCase(String email);
 }

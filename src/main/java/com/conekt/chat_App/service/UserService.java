@@ -1,8 +1,7 @@
-package com.conekt.chat_App.Service;
+package com.conekt.chat_App.service;
 
 import com.conekt.chat_App.entity.AppUser;
 import com.conekt.chat_App.repository.UserRepository;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
@@ -12,7 +11,7 @@ import org.springframework.data.geo.Metrics;
 import org.springframework.stereotype.Service;
 
 //import java.awt.*;
-import java.util.List;
+
 
 @Service
 public class UserService {
