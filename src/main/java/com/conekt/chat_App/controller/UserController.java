@@ -183,6 +183,7 @@ public class UserController {
             otpService.generateAndSendOtp(email);
             return ResponseEntity.ok(Map.of("message", "OTP sent to " + email.trim()));
         } catch (Exception e) {
+            e.printStackTrace();
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", "Failed to send email. Check Gmail SMTP config."));
         }

@@ -1,47 +1,67 @@
 package com.conekt.chat_App.service;
 
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import static org.apache.logging.log4j.util.StringBuilders.escapeJson;
+
 @Service
 public class OtpService {
-    private final JavaMailSender mailSender;
     private final SecureRandom secureRandom = new SecureRandom();
     private final Map<String, OtpEntry> otpStore = new ConcurrentHashMap<>();
+    private final HttpClient httpClient = HttpClient.newHttpClient();
 
-    @Value("${spring.mail.username}")
+    @Value("${resend.api-key}")
+    private String resendApiKey;
+
+    @Value("${resend.mail.username}")
     private String fromEmail;
 
     private record OtpEntry(String otp, Instant expiresAt) {}
-
-    public OtpService(JavaMailSender mailSender) {
-        this.mailSender = mailSender;
-    }
-
 
     public void generateAndSendOtp(String toEmail) {
         String normalizedEmail = toEmail.trim().toLowerCase();
         String otp = String.format("%06d", secureRandom.nextInt(1_000_000));
         otpStore.put(normalizedEmail, new OtpEntry(otp, Instant.now().plusSeconds(300))); // 5 mins
 
-        SimpleMailMessage message = new SimpleMailMessage();
-        message.setFrom(fromEmail);
-        message.setTo(normalizedEmail);
-        message.setSubject("Conekt — Your Verification OTP: " + otp);
-        message.setText(
-                "Welcome to Conekt!\n\n" +
-                        "Your 6-digit verification code is: " + otp + "\n\n" +
-                        "This code expires in 5 minutes. Do not share it with anyone."
+        String textBody = "Welcome to Conekt! Your 6-digit verification code is: " + otp
+                + ". This code expires in 5 minutes.";
+
+        String jsonPayload = String.format(
+                "{\"from\":\"%s\",\"to\":[\"%s\"],\"subject\":\"Conekt — Your Verification OTP: %s\",\"text\":\"%s\"}",
+                escapeJson(fromEmail),
+                escapeJson(normalizedEmail),
+                escapeJson(otp),
+                escapeJson(textBody)
         );
 
-        mailSender.send(message);
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create("https://api.resend.com/emails"))
+                    .header("Authorization", "Bearer " + resendApiKey)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonPayload))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new RuntimeException("Resend API error (" + response.statusCode() + "): " + response.body());
+            }
+        } catch (Exception e) {
+            otpStore.remove(normalizedEmail);
+            throw new RuntimeException("Failed to send OTP email", e);
+        }
+
+
     }
     public boolean verifyOtp(String email, String inputOtp) {
         if (email == null || inputOtp == null) return false;
@@ -58,5 +78,11 @@ public class OtpService {
             return true;
         }
         return false;
+    }
+
+
+    private String escapeJson(String value) {
+        if (value == null) return "";
+        return value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 }
